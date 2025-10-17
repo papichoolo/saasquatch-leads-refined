@@ -165,3 +165,69 @@
   text-align: center;
   font-weight: 500;
 }
+
+/* SMTP Configuration */
+.smtp-config-section {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: #F9FAFB;
+  border-radius: 8px;
+  border: 1px solid #E5E7EB;
+}
+
+.btn-config {
+  width: 100%;
+  padding: 0.75rem;
+  background: white;
+  color: #374151;
+  font-weight: 600;
+  border: 2px solid #E5E7EB;
+  border-radius: 6px;
+  transition: all 0.2s;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-config:hover {
+  background: #F9FAFB;
+  border-color: #D1D5DB;
+}
+
+.smtp-config-form {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #E5E7EB;
+}
+
+.smtp-input {
+  font-family: monospace;
+}
+
+.field-help {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 12px;
+  color: #6B7280;
+}
+
+.field-help a {
+  color: #2563EB;
+  text-decoration: underline;
+}
+
+.field-help a:hover {
+  color: #1D4ED8;
+}
+
+.smtp-status {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+  font-size: 14px;
+  text-align: center;
+  font-weight: 500;
+  border: 1px solid #E5E7EB;
+}

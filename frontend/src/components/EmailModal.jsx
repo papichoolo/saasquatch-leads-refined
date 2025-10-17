@@ -9,6 +9,11 @@ function EmailModal({ lead, onClose }) {
   const [recipientEmail, setRecipientEmail] = useState('')
   const [editedBody, setEditedBody] = useState('')
   const [hasGenerated, setHasGenerated] = useState(false)
+  const [showSmtpConfig, setShowSmtpConfig] = useState(false)
+  
+  // SMTP Configuration state (loaded from localStorage)
+  const [smtpUser, setSmtpUser] = useState(localStorage.getItem('smtp_user') || '')
+  const [smtpPass, setSmtpPass] = useState(localStorage.getItem('smtp_pass') || '')
 
   useEffect(() => {
     // Set default email
@@ -60,19 +65,33 @@ function EmailModal({ lead, onClose }) {
       return
     }
 
+    if (!smtpUser || !smtpPass) {
+      alert('Please configure your SMTP email and app password in the settings')
+      setShowSmtpConfig(true)
+      return
+    }
+
     try {
       setLoading(true)
+      
+      // Save SMTP credentials to localStorage
+      localStorage.setItem('smtp_user', smtpUser)
+      localStorage.setItem('smtp_pass', smtpPass)
+      
       await axios.post('/v1/send', {
         to: [recipientEmail],
         subject: emailData.subject,
         body: editedBody,
-        is_html: false
+        is_html: false,
+        smtp_user: smtpUser,
+        smtp_pass: smtpPass
       })
       alert(`Email sent successfully to ${recipientEmail}!`)
       onClose()
     } catch (error) {
       console.error('Error sending email:', error)
-      alert('Failed to send email. Please check your SMTP configuration.')
+      const errorMsg = error.response?.data?.detail || 'Failed to send email. Please check your SMTP configuration.'
+      alert(errorMsg)
     } finally {
       setLoading(false)
     }
@@ -150,6 +169,53 @@ function EmailModal({ lead, onClose }) {
                   onChange={(e) => setEditedBody(e.target.value)}
                   className="email-textarea"
                 />
+              </div>
+
+              {/* SMTP Configuration Section */}
+              <div className="smtp-config-section">
+                <button 
+                  className="btn-config"
+                  onClick={() => setShowSmtpConfig(!showSmtpConfig)}
+                  type="button"
+                >
+                  ⚙️ {showSmtpConfig ? 'Hide' : 'Configure'} SMTP Settings
+                </button>
+                
+                {showSmtpConfig && (
+                  <div className="smtp-config-form">
+                    <div className="form-field">
+                      <label htmlFor="smtp-user">Your Email (SMTP User)</label>
+                      <input 
+                        id="smtp-user"
+                        type="email"
+                        placeholder="your-email@gmail.com"
+                        value={smtpUser}
+                        onChange={(e) => setSmtpUser(e.target.value)}
+                        className="smtp-input"
+                      />
+                      <small className="field-help">The email address you'll send from</small>
+                    </div>
+
+                    <div className="form-field">
+                      <label htmlFor="smtp-pass">App Password</label>
+                      <input 
+                        id="smtp-pass"
+                        type="password"
+                        placeholder="xxxx xxxx xxxx xxxx"
+                        value={smtpPass}
+                        onChange={(e) => setSmtpPass(e.target.value)}
+                        className="smtp-input"
+                      />
+                      <small className="field-help">
+                        For Gmail: <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">Generate app password</a>
+                      </small>
+                    </div>
+
+                    <div className="smtp-status">
+                      {smtpUser && smtpPass ? '✅ SMTP configured' : '⚠️ SMTP not configured'}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="modal-actions">
