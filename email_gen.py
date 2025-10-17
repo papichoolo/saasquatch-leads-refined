@@ -17,13 +17,34 @@ class EmailContent(BaseModel):
     subject: str = Field(..., description="Email subject line")
     body: str = Field(..., description="Email body content")
 
-def generate_email(name: str, website: str, rec_email: str) -> EmailContent:
+def generate_email(name: str, website: str, rec_email: str, company_sector: str = None, outreach_reason: str = None, sender_website: str = None) -> EmailContent:
     """
     Generate a professional email using GenAI, grounded by the content of the provided website.
+    
+    Args:
+        name: Recipient's name or company name
+        website: Recipient's website URL
+        rec_email: Recipient's email address
+        company_sector: Your company's sector/industry (e.g., "SaaS lead generation", "Marketing automation")
+        outreach_reason: Why you want to reach out to this lead (e.g., "We help companies like yours find qualified leads")
     """
+    
+    # Build dynamic context based on provided parameters
+    context_parts = []
+    if company_sector:
+        context_parts.append(f"My company operates in the {company_sector} sector.")
+    if outreach_reason:
+        context_parts.append(f"I'm reaching out because: {outreach_reason}")
+    
+    context_section = "\n".join(context_parts) if context_parts else "I offer lead enrichment services."
     
     prompt = f"""
 Analyze {website} and write a personalized cold email to {name} ({rec_email}).
+
+Context about my company:
+{context_section}
+
+{sender_website if sender_website else ""}
 
 Format your response exactly as:
 Subject: [subject line here]
@@ -32,7 +53,7 @@ Subject: [subject line here]
 
 Include:
 - Opening: Reference something specific from their website
-- Body (2-3 sentences): Explain how my lead enrichment services can help them
+- Body (2-3 sentences): Explain how my services can help them, using the context provided above
 - CTA: Suggest a brief call
 - Sign-off: "Best regards, [Your Name]"
 
@@ -41,7 +62,7 @@ Keep it under 150 words total.
     
     try:
         response = client.models.generate_content(
-            model="gemini-flash-latest",
+            model="gemini-2.5-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[url_context_tool],
@@ -93,10 +114,13 @@ Keep it under 150 words total.
 if __name__ == '__main__':
     start_time = time.time()
     
+    # Example with context
     email = generate_email(
         name="Interior Story", 
         website="http://interiorstory.co.in/",
-        rec_email="contact@interiorstory.co.in"
+        rec_email="contact@interiorstory.co.in",
+        company_sector="B2B lead generation and enrichment",
+        outreach_reason="We help design and interior businesses find high-quality commercial clients through targeted lead enrichment"
     )
 
     end_time = time.time()

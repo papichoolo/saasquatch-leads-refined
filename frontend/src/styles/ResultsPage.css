@@ -269,7 +269,7 @@
 
 .find-email-btn {
   padding: 0.5rem 0.875rem;
-  background: #10B981;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: white;
   border-radius: 6px;
   font-size: 13px;
@@ -279,7 +279,7 @@
 }
 
 .find-email-btn:hover:not(:disabled) {
-  background: #059669;
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
   transform: translateY(-1px);
 }
 

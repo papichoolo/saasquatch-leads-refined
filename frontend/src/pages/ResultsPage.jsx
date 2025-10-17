@@ -16,7 +16,6 @@ function ResultsPage() {
   const [showEmailModal, setShowEmailModal] = useState(false)
   const [currentLead, setCurrentLead] = useState(null)
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' })
-  const [minRating, setMinRating] = useState(0)
   const [hasEmailFilter, setHasEmailFilter] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [isStreaming, setIsStreaming] = useState(false)
@@ -189,9 +188,6 @@ function ResultsPage() {
 
   // Filter logic
   const filteredLeads = leads.filter(lead => {
-    if (minRating > 0 && (!lead.rating || lead.rating < minRating)) {
-      return false
-    }
     if (hasEmailFilter && (!lead.emails || lead.emails.length === 0)) {
       return false
     }
@@ -232,20 +228,6 @@ function ResultsPage() {
       <div className="results-container">
         <aside className="filters-sidebar">
           <h3>Filters</h3>
-          
-          <div className="filter-group">
-            <label htmlFor="min-rating">Minimum Rating</label>
-            <select 
-              id="min-rating"
-              value={minRating} 
-              onChange={(e) => setMinRating(Number(e.target.value))}
-            >
-              <option value="0">Any</option>
-              <option value="3">3+ ⭐</option>
-              <option value="4">4+ ⭐</option>
-              <option value="4.5">4.5+ ⭐</option>
-            </select>
-          </div>
 
           <div className="filter-group">
             <label>

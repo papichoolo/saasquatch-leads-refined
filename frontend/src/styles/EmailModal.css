@@ -231,3 +231,36 @@
   font-weight: 500;
   border: 1px solid #E5E7EB;
 }
+
+/* Input Section */
+.input-section {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.section-description {
+  font-size: 15px;
+  color: #6B7280;
+  margin-bottom: 1.5rem;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.input-field {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 15px;
+  border: 2px solid #E5E7EB;
+  border-radius: 6px;
+  transition: border-color 0.2s;
+  font-family: 'Inter', sans-serif;
+}
+
+.input-field:focus {
+  border-color: #2563EB;
+  outline: none;
+}
+
+.input-field::placeholder {
+  color: #9CA3AF;
+}

@@ -24,9 +24,8 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import Tavily enrichment module
-from tavily_enricher import tavily_enrich_lead, tavily_enrich_batch
+from tavily_enricher import tavily_enrich_lead
 from email_gen import generate_email as gen_email, EmailContent
-from email_gen import generate_email, EmailContent
 
 # Load environment variables
 load_dotenv(override=True)
@@ -80,6 +79,9 @@ class GenerateEmailRequest(BaseModel):
     name: str
     website: str
     rec_email: str
+    company_sector: Optional[str] = Field(None, description="Your company's sector/industry (e.g., 'SaaS lead generation')")
+    sender_website: Optional[str] = Field(None, description="Your company's website URL")
+    outreach_reason: Optional[str] = Field(None, description="Why you want to reach out to this lead")
     
 class SendEmailRequest(BaseModel):
     to: List[EmailStr] = Field(..., description="Recipient emails")
@@ -491,10 +493,23 @@ def tavily_enrich(request: TavilyEnrichRequest):
 
 @app.post("/v1/generate-email", response_model=EmailContent)
 def generate_email_endpoint(request: GenerateEmailRequest):
-    """Generate a personalized email grounded on the company's website content."""
+    """
+    Generate a personalized email grounded on the company's website content.
+    
+    Provide optional context about your company to personalize the email further:
+    - company_sector: Your industry/sector (e.g., "B2B lead generation")
+    - outreach_reason: Why you're reaching out (e.g., "We help companies find qualified leads")
+    """
     try:
         # Delegate to email_gen.generate_email which returns EmailContent
-        result = gen_email(name=request.name, website=request.website, rec_email=request.rec_email)
+        result = gen_email(
+            name=request.name, 
+            website=request.website, 
+            rec_email=request.rec_email,
+            sender_website=request.sender_website,
+            company_sector=request.company_sector,
+            outreach_reason=request.outreach_reason
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Email generation failed: {e}")
