@@ -5,6 +5,7 @@ Uses Tavily AI search to find emails and LinkedIn when direct scraping fails
 import os
 import re
 import time
+from dotenv import load_dotenv
 import html
 import tldextract
 import requests
@@ -12,8 +13,10 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
+load_dotenv(override=True)
+
 # ---------- config ----------
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY") or "YOUR_TAVILY_KEY"
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 UA = os.getenv("USER_AGENT") or "LeadFinderBot/1.0 (+contact@example.com)"
 REQ_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT") or "12")
 BACKOFF = 0.5
@@ -120,26 +123,39 @@ def _build_smart_queries(name: str, website: Optional[str], location: Optional[s
     company_domain = _company_domain_from_website(website)
     queries = []
     
+    # Extract city from location for more targeted searches
+    city = None
+    if location:
+        # Try to extract city name (first part before comma)
+        city = location.split(',')[0].strip()
+    
     # Only query what we need
     if need_emails and need_linkedin:
         # Comprehensive query first
         if company_domain:
             queries.append(f'site:{company_domain} (email OR contact OR linkedin)')
-        queries.append(f'{name} contact email linkedin')
-        if location:
-            queries.append(f'{name} {location} contact email')
+        # Add location to make more specific
+        if city:
+            queries.append(f'"{name}" {city} contact email')
+            queries.append(f'"{name}" {city} linkedin')
+        else:
+            queries.append(f'"{name}" contact email linkedin')
     
     elif need_emails:
         # Email-focused
         if company_domain:
             queries.append(f'site:{company_domain} (email OR contact)')
-        queries.append(f'{name} contact email')
+        if city:
+            queries.append(f'"{name}" {city} contact email')
+        else:
+            queries.append(f'"{name}" contact email')
     
     elif need_linkedin:
         # LinkedIn-focused  
-        queries.append(f'{name} linkedin company profile')
-        if location:
-            queries.append(f'{name} {location} linkedin')
+        if city:
+            queries.append(f'"{name}" {city} linkedin')
+        else:
+            queries.append(f'"{name}" linkedin company profile')
     
     return queries[:3]  # Max 3 queries to control costs
 
@@ -173,10 +189,32 @@ def tavily_enrich_lead(
             "cost_estimate_usd": float
         }
     """
-    # Skip what we already have
+    
+    if not TAVILY_API_KEY:
+        print("[ERROR] TAVILY_API_KEY is not set in environment variables.")
+        return {
+            "emails": [],
+            "linkedin": None,
+            "sources": {},
+            "queries_run": [],
+            "api_calls_made": 0,
+            "cost_estimate_usd": 0.0,
+            "error": "TAVILY_API_KEY is not set in environment variables."
+        }
+    
+    print("[DEBUG] tavily_enrich_lead called with:", {
+        "name": name,
+        "website": website,
+        "location": location,
+        "existing_emails": existing_emails,
+        "existing_linkedin": existing_linkedin,
+        "max_queries": max_queries,
+        "fetch_pages": fetch_pages
+    })
+    # Determine what we need
     need_emails = not existing_emails or len(existing_emails) == 0
     need_linkedin = not existing_linkedin
-    
+
     if not need_emails and not need_linkedin:
         return {
             "emails": existing_emails or [],
@@ -186,101 +224,55 @@ def tavily_enrich_lead(
             "cost_estimate_usd": 0.0,
             "skipped": "Already has all data"
         }
-    
+
     company_domain = _company_domain_from_website(website)
     queries = _build_smart_queries(name, website, location, need_emails, need_linkedin)
-    queries = queries[:max_queries]  # Enforce limit
-    
-    found_emails: set[str] = set()
-    found_linkedins: set[str] = set()
-    sources: dict[str, set[str]] = {}
+    queries = queries[:max_queries]
+
+    found_emails = set()
+    found_linkedins = set()
+    sources = {}
     api_calls = 0
-    
-    # OPTIMIZATION: Parallel queries instead of sequential
-    def run_query(q):
+
+    # Run queries sequentially
+    for q in queries:
         results = _tavily_search(q, max_results=5)
-        return q, results
-    
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(run_query, q) for q in queries]
-        
-        for future in as_completed(futures):
-            query, results = future.result()
-            if results:
-                api_calls += 1
-            
-            # Extract from snippets
-            for res in results:
-                content = f"{res.get('title','')}\n{res.get('content','')}\n{res.get('url','')}"
-                
-                if need_emails:
-                    for e in _extract_emails(content):
-                        found_emails.add(e)
-                        sources.setdefault(e, set()).add(res.get("url", ""))
-                
-                if need_linkedin:
-                    for l in _extract_linkedins(content):
-                        found_linkedins.add(l)
-                        sources.setdefault(l, set()).add(res.get("url", ""))
-            
-            # OPTIMIZATION: Early exit when both found
-            has_good_emails = any(_is_company_email(e, company_domain) for e in found_emails)
-            has_linkedin = len(found_linkedins) > 0
-            
-            if (not need_emails or has_good_emails) and (not need_linkedin or has_linkedin):
-                break
-    
-    # Optional: Fetch pages for deeper extraction (adds time & complexity)
-    if fetch_pages and api_calls > 0:
-        # Only fetch if we didn't find enough from snippets
-        has_good_emails = any(_is_company_email(e, company_domain) for e in found_emails)
-        if (need_emails and not has_good_emails) or (need_linkedin and not found_linkedins):
-            # Fetch top 2 results only
-            all_results = []
-            for _, results in [executor.submit(run_query, q).result() for q in queries[:1]]:
-                all_results.extend(results[:2])
-            
-            for res in all_results:
-                url = res.get("url")
-                if not url:
-                    continue
-                netloc = urlparse(url).netloc.lower()
-                if any(s in netloc for s in ("facebook.com", "instagram.com", "x.com", "twitter.com")):
-                    continue
-                
-                html_text = _fetch(url)
-                if html_text:
-                    if need_emails:
-                        for e in _extract_emails(html_text):
-                            found_emails.add(e)
-                            sources.setdefault(e, set()).add(url)
-                    if need_linkedin:
-                        for l in _extract_linkedins(html_text):
-                            found_linkedins.add(l)
-                            sources.setdefault(l, set()).add(url)
-                    time.sleep(BACKOFF)
-    
+        api_calls += 1
+        for res in results:
+            content = f"{res.get('title','')}\n{res.get('content','')}\n{res.get('url','')}"
+            if need_emails:
+                for e in _extract_emails(content):
+                    found_emails.add(e)
+                    sources.setdefault(e, set()).add(res.get("url", ""))
+            if need_linkedin:
+                for l in _extract_linkedins(content):
+                    found_linkedins.add(l)
+                    sources.setdefault(l, set()).add(res.get("url", ""))
+
     # Filter and rank emails
     filtered_emails = []
     if need_emails:
-        filtered_emails = [e for e in found_emails if _is_company_email(e, company_domain)]
+        # First try company emails (if we have a domain)
+        if company_domain:
+            filtered_emails = [e for e in found_emails if _is_company_email(e, company_domain)]
+        
+        # If no company emails found (or no domain), accept any non-free emails
         if not filtered_emails:
             filtered_emails = [e for e in found_emails if e.split("@")[-1].lower() not in FREE_DOMAINS]
+        
+        # Sort by quality
         filtered_emails = sorted(filtered_emails, key=_rank_email, reverse=True)
     else:
         filtered_emails = existing_emails or []
-    
-    # LinkedIn
+
     linkedin = sorted(found_linkedins)[0] if found_linkedins else (existing_linkedin or None)
-    
-    # Tavily pricing: ~$0.005 per search (advanced mode)
     cost_estimate = api_calls * 0.005
-    
+
     return {
         "emails": filtered_emails,
         "linkedin": linkedin,
         "sources": {k: sorted(v) for k, v in sources.items()},
-        "queries_run": queries[:api_calls],
+        "queries_run": queries,
         "api_calls_made": api_calls,
         "cost_estimate_usd": round(cost_estimate, 4),
         "company_domain": company_domain

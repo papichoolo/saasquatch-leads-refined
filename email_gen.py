@@ -3,10 +3,11 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from google.genai.types import GenerateContentConfig, UrlContext, Tool
 import json
+import os
 import time
 
 # Initialize client globally (assuming you have your environment set up)
-client = genai.Client()
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Define the Tool (moved outside function for efficiency)
 url_context_tool = types.Tool(url_context=types.UrlContext())

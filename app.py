@@ -1,10 +1,13 @@
 # app_optimized.py
 import json
 import time
+import ssl
+from typing import Optional, List
 import asyncio
+from email.message import EmailMessage
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
 import os
 from dotenv import load_dotenv
@@ -15,6 +18,7 @@ import re
 import html
 import tldextract
 from urllib.parse import urljoin
+import smtplib
 from urllib import robotparser
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,14 +29,18 @@ from email_gen import generate_email as gen_email, EmailContent
 from email_gen import generate_email, EmailContent
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 app = FastAPI(title="Lead Enrichment API (Optimized)", version="2.0.0")
 
 # Configuration
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_MAPS") or "YOUR_GOOGLE_PLACES_KEY"
-BING_API_KEY = os.getenv("BING_API_KEY")
-UA = os.getenv("USER_AGENT") or "LeadFinderBot/1.0 (+contact@example.com)"
+#BING_API_KEY = os.getenv("BING_API_KEY")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SMTP_USER = os.getenv("SMTP_USER")          # e.g. your@gmail.com
+SMTP_PASS = os.getenv("GMAIL_PASSWORD")
+UA = os.getenv("USER_AGENT") or "SaasquatchLeadsBot/1.0 (+contact@example.com)"
 REQ_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT") or "8")  # Reduced from 12s
 MAX_WORKERS = int(os.getenv("MAX_WORKERS") or "5")  # Parallel requests
 
@@ -72,6 +80,20 @@ class GenerateEmailRequest(BaseModel):
     name: str
     website: str
     rec_email: str
+    
+class SendEmailRequest(BaseModel):
+    to: List[EmailStr] = Field(..., description="Recipient emails")
+    subject: str
+    body: str
+    is_html: bool = False
+    from_addr: Optional[EmailStr] = None     # default to SMTP_USER
+    smtp_user: Optional[str] = None          # user-defined SMTP email
+    smtp_pass: Optional[str] = None          # user-defined app password
+
+class SendEmailResponse(BaseModel):
+    sent: bool
+    to: List[EmailStr]
+    subject: str
 
 # Helper functions - optimized versions
 def google_places_search_text(text_query, field_mask):
@@ -370,6 +392,40 @@ def enrich_fast_ndjson(request: EnrichRequest):
         media_type="application/x-ndjson"
     )
 
+def _send_email(from_addr: str, to_addrs: List[str], subject: str, body: str, is_html: bool, smtp_user: str, smtp_pass: str):
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = ", ".join(to_addrs)
+
+    if is_html:
+        msg.set_content("Your client may not support HTML.")
+        msg.add_alternative(body, subtype="html")
+    else:
+        msg.set_content(body)
+
+    ctx = ssl.create_default_context()
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as server:
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+
+@app.post("/v1/send", response_model=SendEmailResponse)
+def send(req: SendEmailRequest):
+    from_addr = req.from_addr or req.smtp_user or SMTP_USER
+    smtp_user = req.smtp_user or SMTP_USER
+    smtp_pass = req.smtp_pass or SMTP_PASS
+    if not smtp_user or not smtp_pass:
+        raise HTTPException(status_code=400, detail="SMTP user and app password required.")
+    try:
+        _send_email(from_addr, req.to, req.subject, req.body, req.is_html, smtp_user, smtp_pass)
+        return SendEmailResponse(sent=True, to=req.to, subject=req.subject)
+    except smtplib.SMTPAuthenticationError as e:
+        raise HTTPException(status_code=401, detail="SMTP auth failed")
+    except smtplib.SMTPException as e:
+        raise HTTPException(status_code=502, detail=f"SMTP error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
 @app.post("/v1/tavily-enrich")
 def tavily_enrich(request: TavilyEnrichRequest):
     """
@@ -398,24 +454,40 @@ def tavily_enrich(request: TavilyEnrichRequest):
     """
     import os
     tavily_key = os.getenv("TAVILY_API_KEY")
+    print(tavily_key)
     if not tavily_key or tavily_key == "YOUR_TAVILY_KEY":
-        raise HTTPException(
-            status_code=500,
-            detail="Tavily API key not configured. Set TAVILY_API_KEY environment variable."
+        print("[ERROR] Tavily API key not configured. Set TAVILY_API_KEY environment variable.")
+        return {
+            "error": "Tavily API key not configured. Set TAVILY_API_KEY environment variable.",
+            "status": "failed"
+        }
+
+    try:
+        result = tavily_enrich_lead(
+            name=request.name,
+            website=request.website,
+            location=request.location,
+            existing_emails=request.existing_emails,
+            existing_linkedin=request.existing_linkedin,
+            max_queries=min(request.max_queries, 5),  # Cap at 5
+            fetch_pages=request.fetch_pages
         )
-    
-    result = tavily_enrich_lead(
-        name=request.name,
-        website=request.website,
-        location=request.location,
-        existing_emails=request.existing_emails,
-        existing_linkedin=request.existing_linkedin,
-        max_queries=min(request.max_queries, 5),  # Cap at 5
-        fetch_pages=request.fetch_pages
-    )
-    print(f"Tavily Enrich Result: {result}")
-    
-    return result
+        print(f"Tavily Enrich Result: {result}")
+        if not result or (isinstance(result, dict) and result.get("error")):
+            print(f"[ERROR] Tavily enrichment failed: {result}")
+            return {
+                "error": "Tavily enrichment failed.",
+                "details": result,
+                "status": "failed"
+            }
+        return result
+    except Exception as e:
+        print(f"[ERROR] Exception during Tavily enrichment: {e}")
+        return {
+            "error": "Exception during Tavily enrichment.",
+            "details": str(e),
+            "status": "failed"
+        }
 
 @app.post("/v1/generate-email", response_model=EmailContent)
 def generate_email_endpoint(request: GenerateEmailRequest):
